@@ -1,7 +1,7 @@
 import Darwin
 
-/// Maps a helper process (e.g. Safari's WebKit GPU process) to the app responsible for it.
-/// Uses the private `responsibility_get_pid_responsible_for_pid`, and falls back to the PID itself.
+/// Resolves a helper process, such as WebKit's GPU process, to its responsible app using the
+/// private `responsibility_get_pid_responsible_for_pid`. Falls back to the given PID.
 public enum ResponsiblePID {
     private typealias Function = @convention(c) (pid_t) -> pid_t
 

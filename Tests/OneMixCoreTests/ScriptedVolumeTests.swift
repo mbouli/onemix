@@ -2,7 +2,6 @@ import Foundation
 import XCTest
 @testable import OneMixCore
 
-/// Thread-safe recorder for the fake AppleScript runner.
 private final class Recorder: @unchecked Sendable {
     private let lock = NSLock()
     private var _scripts: [String] = []
@@ -28,7 +27,7 @@ final class ScriptedVolumeTests: XCTestCase {
         ScriptedVolume(
             queue: queue,
             minSendInterval: 0,
-            verifyDelay: 3600,  // these tests don't exercise read-back verification
+            verifyDelay: 3600,  // disable verification
             isRunning: { _ in recorder.running },
             run: { script in recorder.record(script); return result(script) },
             onResult: onResult
@@ -60,7 +59,7 @@ final class ScriptedVolumeTests: XCTestCase {
         let volume = makeVolume(recorder, queue: queue)
         queue.suspend()
         volume.set(AppVolumeSetting(volume: 0.3), for: music)
-        recorder.running = false  // user quits Music before the Apple Event is sent
+        recorder.running = false  // quit before send
         queue.resume()
         await settle(queue)
         XCTAssertEqual(recorder.scripts, [], "sending the event would relaunch the app")
@@ -73,7 +72,7 @@ final class ScriptedVolumeTests: XCTestCase {
         var readBack: Int?
         queue.suspend()
         volume.read(music) { readBack = $0 }
-        volume.set(AppVolumeSetting(volume: 0.9), for: music)  // user drags after the read started
+        volume.set(AppVolumeSetting(volume: 0.9), for: music)  // set during read
         queue.resume()
         await settle(queue)
         XCTAssertNil(readBack, "a stale read must not overwrite the just-dragged value")
@@ -93,11 +92,11 @@ final class ScriptedVolumeTests: XCTestCase {
     func testFailureAndSuccessAreReported() async {
         let queue = DispatchQueue(label: "test")
         var results: [Bool] = []
-        let errorNumber = Recorder()  // running=true means "fail" for this test
+        let errorNumber = Recorder()  // `running` toggles failure
         let volume = ScriptedVolume(
             queue: queue,
             isRunning: { _ in true },
-            run: { _ in .init(descriptor: nil, errorNumber: errorNumber.running ? -1743 : nil) },  // -1743: Apple Events not permitted
+            run: { _ in .init(descriptor: nil, errorNumber: errorNumber.running ? -1743 : nil) },
             onResult: { _, ok in results.append(ok) }
         )
         volume.set(AppVolumeSetting(volume: 0.3), for: music)
@@ -119,9 +118,9 @@ final class ScriptedVolumeTests: XCTestCase {
         XCTAssertEqual(recorder.scripts, ["tell application id \"com.apple.Music\" to (player state as text)"])
     }
 
-    // MARK: Verification (Music can apply rapid volume commands out of order)
+    // MARK: Verification
 
-    /// A fake Music whose volume can drift once to a stale value right after a set.
+    /// Fake Music that can revert to a stale volume once after a set.
     private final class FakeMusic: @unchecked Sendable {
         private let lock = NSLock()
         private var volume = 100
@@ -183,7 +182,6 @@ final class ScriptedVolumeTests: XCTestCase {
             run: { recorder.record($0); return .init(descriptor: nil, errorNumber: nil) },
             onResult: { _, _ in }
         )
-        // A 300 ms drag of 30 values should send only a handful, ending on the last one.
         for step in stride(from: 30, through: 0, by: -1) {
             volume.set(AppVolumeSetting(volume: Float(step) / 100), for: music)
             try await Task.sleep(for: .milliseconds(10))

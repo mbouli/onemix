@@ -1,6 +1,6 @@
 import Foundation
 
-/// Persists per-app volume settings (keyed by bundle ID) and app preferences.
+/// Persists per-app volume settings, keyed by bundle ID, and app preferences.
 public final class VolumeStore {
     private enum Key {
         static let settings = "appVolumeSettings"

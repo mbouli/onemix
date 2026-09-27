@@ -1,7 +1,7 @@
 import Foundation
 
-/// System Audio Recording (TCC kTCCServiceAudioCapture) status. There is no public API,
-/// so this uses TCC's preflight/request functions, the same approach as Apple's AudioCap sample.
+/// System Audio Recording permission (kTCCServiceAudioCapture). There is no public API, so
+/// this calls TCC's preflight and request functions directly, as Apple's AudioCap sample does.
 public enum AudioCapturePermission {
     public enum Status: Equatable, Sendable { case granted, denied, unknown }
 
@@ -30,8 +30,7 @@ public enum AudioCapturePermission {
         }
     }
 
-    /// Shows the system prompt if needed. If TCC is unavailable, reports granted and
-    /// lets tap creation trigger the system prompt itself.
+    /// Prompts if needed. If TCC is unavailable, reports granted and lets tap creation prompt.
     public static func request(_ completion: @escaping @Sendable (Bool) -> Void) {
         guard let requestAccess else {
             completion(true)

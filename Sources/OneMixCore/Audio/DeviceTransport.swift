@@ -33,9 +33,8 @@ public enum DeviceTransport: Equatable, Sendable {
         }
     }
 
-    /// Whether a tap replayed on this output should use Core Audio drift compensation.
-    /// Off for Bluetooth: AirPods slew delivery speed (0.9x/1.1x) when changing latency,
-    /// and the compensator chasing that swinging clock stalled the stream into silence.
+    /// Whether to enable drift compensation. Disabled for Bluetooth: AirPods vary their clock
+    /// rate by up to ±10% when changing latency, and the compensator stalls chasing it.
     public var usesTapDriftCompensation: Bool { self != .bluetooth }
 
     public var symbolName: String {

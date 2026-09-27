@@ -1,14 +1,13 @@
 import Foundation
 import os
 
-/// Drives an app's own volume (and OneMix's mute, sent as volume 0) via AppleScript (see `NativeVolumeApps`). Apple Events
-/// can block, so they run on a serial background queue; while a slider is dragging, only
-/// the latest value per app is sent.
+/// Sets an app's volume through AppleScript (see `NativeVolumeApps`). Apple Events can
+/// block, so they are sent from a serial queue, and rapid updates are coalesced per app.
 public final class ScriptedVolume: @unchecked Sendable {
-    /// Unchecked: the descriptor is created once by the runner and only read afterwards.
+    /// Unchecked: the descriptor is never mutated after creation.
     public struct ScriptResult: @unchecked Sendable {
         public let descriptor: NSAppleEventDescriptor?
-        /// AppleScript error number, or nil on success (-1743: not permitted to send Apple Events).
+        /// AppleScript error number, or nil on success. -1743 means Apple Events are not permitted.
         public let errorNumber: Int?
 
         public init(descriptor: NSAppleEventDescriptor?, errorNumber: Int?) {
@@ -26,24 +25,20 @@ public final class ScriptedVolume: @unchecked Sendable {
 
     private let lock = NSLock()
     private var pending: [String: AppVolumeSetting] = [:]  // guarded by lock
-    /// Bumped on every `set`, so a read that started before a set can be discarded.
+    /// Incremented on every `set` so that reads started earlier can be discarded.
     private var generation: [String: Int] = [:]  // guarded by lock
     private var lastSetting: [String: AppVolumeSetting] = [:]  // guarded by lock
-    private var lastSend: [String: Date] = [:]  // touched only on queue
+    private var lastSend: [String: Date] = [:]  // confined to queue
 
-    /// Correction attempts after the final value of a change.
+    /// Maximum re-sends when the read-back volume doesn't match.
     private static let maxVerifyAttempts = 3
 
     /// - Parameters:
-    ///   - isRunning: Checked right before each Apple Event is sent; sending one to an app
-    ///     that isn't running would launch it.
-    ///   - onResult: Called on the main actor after each `set` with whether it succeeded.
-    /// - Parameters:
-    ///   - minSendInterval: Minimum spacing between volume commands to one app. Music applies
-    ///     `sound volume` asynchronously, and commands ~16 ms apart (a slider drag) can land
-    ///     out of order, leaving it at a stale mid-drag value.
-    ///   - verifyDelay: After the last change, how long to wait before reading the app's volume
-    ///     back and re-sending if it doesn't match.
+    ///   - minSendInterval: Minimum spacing between commands to one app. Music applies
+    ///     `sound volume` asynchronously, and closely spaced commands can land out of order.
+    ///   - verifyDelay: Delay after the last change before reading the volume back.
+    ///   - isRunning: Checked before each Apple Event, since sending one launches the app.
+    ///   - onResult: Called on the main actor after each send with whether it succeeded.
     public init(
         queue: DispatchQueue = DispatchQueue(label: "com.onemix.scripted-volume", qos: .userInitiated),
         minSendInterval: TimeInterval = 0.08,
@@ -81,7 +76,7 @@ public final class ScriptedVolume: @unchecked Sendable {
         }
     }
 
-    /// Runs on `queue`.
+    /// Must be called on `queue`.
     @discardableResult
     private func send(_ volume: Int, to bundleID: String) -> Bool {
         guard isRunning(bundleID) else {
@@ -96,8 +91,8 @@ public final class ScriptedVolume: @unchecked Sendable {
         return succeeded
     }
 
-    /// After the final value of a change, reads the app's volume back and re-sends it if the
-    /// app ended somewhere else. Skipped as soon as a newer value is set.
+    /// Reads the volume back after a change settles and re-sends it on mismatch. Abandoned
+    /// if a newer value is set.
     private func scheduleVerify(_ bundleID: String, generation sentGeneration: Int, attempt: Int) {
         queue.asyncAfter(deadline: .now() + verifyDelay) { [self] in
             let (current, expected): (Int, AppVolumeSetting?) = lock.withLock {
@@ -116,9 +111,8 @@ public final class ScriptedVolume: @unchecked Sendable {
         }
     }
 
-    /// Reads the app's current `sound volume` (0...100, e.g. changed inside the app itself).
-    /// The completion runs on the main actor, and is skipped if a `set` happened after this
-    /// read started, so a stale value never overwrites a just-dragged one.
+    /// Reads the app's current `sound volume` (0...100). The completion runs on the main
+    /// actor and is dropped if a `set` happens while the read is in flight.
     public func read(_ bundleID: String, completion: @escaping @MainActor (Int) -> Void) {
         let startGeneration = lock.withLock { generation[bundleID, default: 0] }
         queue.async { [self] in
@@ -132,8 +126,8 @@ public final class ScriptedVolume: @unchecked Sendable {
         }
     }
 
-    /// Asks the app whether it is playing right now (used once, e.g. when OneMix launches
-    /// while Music is already playing; after that its playerInfo notifications are enough).
+    /// Queries the current player state. Only needed at launch; playerInfo notifications
+    /// cover changes after that.
     public func readIsPlaying(_ bundleID: String, completion: @escaping @MainActor (Bool) -> Void) {
         queue.async { [self] in
             guard isRunning(bundleID),

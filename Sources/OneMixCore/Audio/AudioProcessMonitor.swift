@@ -3,7 +3,7 @@ import Darwin
 import Observation
 import os
 
-/// A Core Audio process object: any process that has touched audio.
+/// A Core Audio process object.
 public struct AudioProcess: Equatable, Sendable {
     public let objectID: AudioObjectID
     public let pid: pid_t
@@ -18,12 +18,11 @@ public struct AudioProcess: Equatable, Sendable {
     }
 }
 
-/// Live list of Core Audio process objects. Updates via listeners on the process list and
-/// on each process's "is running" flag, plus a cheap once-a-second re-check as a safety net.
+/// Tracks Core Audio process objects through listeners on the process list and each
+/// process's `IsRunning` property, with a one-second poll as a fallback.
 ///
-/// Core Audio never posts change notifications for `kAudioProcessPropertyIsRunningOutput`
-/// (only for `kAudioProcessPropertyIsRunning`), so listening to the output flag directly
-/// missed apps starting playback until something unrelated triggered a refresh.
+/// Core Audio does not send change notifications for `kAudioProcessPropertyIsRunningOutput`,
+/// so it can't be observed directly.
 @MainActor @Observable
 public final class AudioProcessMonitor {
     public private(set) var processes: [AudioProcess] = []
@@ -41,8 +40,8 @@ public final class AudioProcessMonitor {
         listListener = PropertyListener(.system, CA.address(kAudioHardwarePropertyProcessObjectList)) { [weak self] in
             self?.refresh()
         }
-        // Safety net for changes no event covers (e.g. an app already running input that
-        // starts output). A few property reads per process; publishes only on change.
+        // Catches changes with no notification, such as a process that is already running
+        // input starting output. Publishes only when something changed.
         recheckTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.refresh() }
         }
@@ -50,7 +49,7 @@ public final class AudioProcessMonitor {
 
     public func refresh() {
         let ids = (try? CA.getObjectIDs(.system, CA.address(kAudioHardwarePropertyProcessObjectList))) ?? []
-        // Listen before reading, so a change between the read and the registration isn't lost.
+        // Register before reading so no change is missed in between.
         syncListeners(ids)
         let ownPID = getpid()
         let updated = ids.compactMap(Self.read).filter { $0.pid != ownPID }

@@ -2,7 +2,7 @@ import CoreAudio
 import Foundation
 
 public enum OneMixIDs {
-    /// UID prefix for our private aggregate devices, so they can be hidden from device lists.
+    /// UID prefix for OneMix's aggregate devices, used to hide them from device lists.
     public static let aggregateUIDPrefix = "com.onemix.aggregate."
 }
 
@@ -22,7 +22,7 @@ extension AudioObjectID {
     static let unknown = AudioObjectID(kAudioObjectUnknown)
 }
 
-/// Thin typed wrappers over AudioObject property calls.
+/// Typed wrappers for AudioObject property access.
 enum CA {
     static func address(
         _ selector: AudioObjectPropertySelector,
@@ -37,7 +37,7 @@ enum CA {
         return AudioObjectHasProperty(object, &address)
     }
 
-    /// Wraps `AudioObjectIsPropertySettable`, treating any error as "not settable".
+    /// Returns false on error.
     static func isSettable(_ object: AudioObjectID, _ address: AudioObjectPropertyAddress) -> Bool {
         var address = address
         var settable: DarwinBoolean = false
@@ -82,7 +82,7 @@ enum CA {
     }
 }
 
-/// Listens to one Core Audio property on the main queue for as long as this object lives.
+/// Observes a Core Audio property on the main queue until deallocated.
 final class PropertyListener {
     private let object: AudioObjectID
     private var address: AudioObjectPropertyAddress

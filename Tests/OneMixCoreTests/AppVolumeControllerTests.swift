@@ -3,8 +3,7 @@ import XCTest
 
 @testable import OneMixCore
 
-/// Records tap lifecycle events in call order, shared across a test's fake taps, so
-/// tests can assert *when* a new tap is created relative to the old one being torn down.
+/// Shared log of tap lifecycle events, for asserting creation and teardown order.
 private final class EventLog {
     private(set) var events: [String] = []
     func record(_ event: String) { events.append(event) }
@@ -13,8 +12,6 @@ private final class EventLog {
 
 private struct TapFailure: Error {}
 
-/// A fake `AudioTap` that records gain changes and invalidation instead of touching
-/// Core Audio, so `AppVolumeController`'s rebuild logic can be tested without real taps.
 private final class FakeTap: AudioTap {
     let processObjectIDs: [AudioObjectID]
     private(set) var outputUID: String
@@ -53,8 +50,7 @@ private final class FakeTap: AudioTap {
 
 @MainActor
 final class AppVolumeControllerTests: XCTestCase {
-    /// Builds a controller whose fake taps are numbered in creation order and log to
-    /// `log`. `shouldFail` decides, by that creation-order id, whether construction throws.
+    /// Fake taps are numbered in creation order; `shouldFail` receives that number.
     private func makeController(
         log: EventLog,
         shouldFail: @escaping (Int) -> Bool = { _ in false },
@@ -74,7 +70,6 @@ final class AppVolumeControllerTests: XCTestCase {
 
     private let bundleID = "com.example.app"
 
-    // (a) Calling setOutputDevice with the same UID twice rebuilds the taps.
     func testSetOutputDeviceWithSameUIDTwiceRebuildsTaps() {
         let log = EventLog()
         let controller = makeController(log: log)
@@ -89,7 +84,6 @@ final class AppVolumeControllerTests: XCTestCase {
         XCTAssertEqual(log.events, ["create(1)", "invalidate(0)"], "the new tap must be created before the old one is invalidated")
     }
 
-    // (b) When process IDs change, the new tap is created before the old one is invalidated.
     func testProcessIDChangeCreatesNewTapBeforeInvalidatingOldOne() {
         let log = EventLog()
         let controller = makeController(log: log)
@@ -103,8 +97,6 @@ final class AppVolumeControllerTests: XCTestCase {
         XCTAssertEqual(log.events, ["create(1)", "invalidate(0)"])
     }
 
-    // (c) When construction fails during a rebuild, the old tap is invalidated and the
-    // bundle ID lands in failedBundleIDs.
     func testFailedRebuildInvalidatesOldTapAndRecordsFailure() {
         let log = EventLog()
         let controller = makeController(log: log, shouldFail: { id in id == 1 })
@@ -120,7 +112,6 @@ final class AppVolumeControllerTests: XCTestCase {
         XCTAssertEqual(log.events, ["invalidate(0)"], "the old tap is invalidated even though the replacement failed")
     }
 
-    // (d) rebuildAll() invalidates the existing taps and recreates them.
     func testRebuildAllInvalidatesAndRecreatesExistingTaps() {
         let log = EventLog()
         let controller = makeController(log: log)
@@ -136,7 +127,6 @@ final class AppVolumeControllerTests: XCTestCase {
         XCTAssertTrue(controller.failedBundleIDs.isEmpty)
     }
 
-    // (e) retryFailed() after a failure re-attempts construction.
     func testRetryFailedReattemptsConstruction() {
         let log = EventLog()
         var failNextConstruction = true
@@ -158,8 +148,6 @@ final class AppVolumeControllerTests: XCTestCase {
         XCTAssertTrue(controller.failedBundleIDs.isEmpty)
     }
 
-    // Returning to 100% keeps the existing tap at full gain instead of tearing it down,
-    // so there is no audio gap on the way back.
     func testReturningToFullVolumeKeepsTapAtFullGain() {
         let log = EventLog()
         var taps: [FakeTap] = []
@@ -175,8 +163,6 @@ final class AppVolumeControllerTests: XCTestCase {
         XCTAssertEqual(taps.first?.gainCalls.last, 1)
     }
 
-    // A kept tap still follows process changes (rebuilt at full gain), so a routed app
-    // at 100% never falls back to native audio mid-session.
     func testRoutedAppAtFullVolumeIsRebuiltWhenProcessesChange() {
         let log = EventLog()
         let controller = makeController(log: log)
@@ -191,8 +177,6 @@ final class AppVolumeControllerTests: XCTestCase {
         XCTAssertEqual(log.events, ["create(1)", "invalidate(0)"])
     }
 
-    // Once the app goes away (dropped from sync), routing is forgotten: when it comes back
-    // at 100% it plays natively with no tap.
     func testAppLeavingForgetsRouting() {
         let log = EventLog()
         let controller = makeController(log: log)
@@ -206,7 +190,6 @@ final class AppVolumeControllerTests: XCTestCase {
         XCTAssertEqual(controller.activeTapCount, 0)
     }
 
-    // A never-adjusted app at 100% gets no tap.
     func testUntouchedAppAtFullVolumeGetsNoTap() {
         let log = EventLog()
         let controller = makeController(log: log)
@@ -216,8 +199,6 @@ final class AppVolumeControllerTests: XCTestCase {
         XCTAssertEqual(log.events, [])
     }
 
-    // The first tap for an app ramps from native full volume down to the target, while a
-    // replacement tap starts at the target gain (it takes over from an already-quieted tap).
     func testFirstTapRampsFromFullVolumeReplacementStartsAtTarget() {
         let log = EventLog()
         var taps: [FakeTap] = []
@@ -229,9 +210,7 @@ final class AppVolumeControllerTests: XCTestCase {
         XCTAssertEqual(taps.map(\.startGain), [1, 0.3])
     }
 
-    // Switching to a different output moves the running tap in place instead of rebuilding
-    // it: stopping and restarting a tap's IO makes macOS Bluetooth smart routing hijack the
-    // output back to in-ear AirPods.
+    // Restarting IO would trigger Bluetooth automatic switching; see `ProcessTap.setOutputDevice`.
     func testOutputChangeMovesTapInPlace() {
         let log = EventLog()
         var taps: [FakeTap] = []

@@ -13,7 +13,7 @@ final class SampleMixerTests: XCTestCase {
         allocated = []
     }
 
-    /// Builds a buffer list; each entry is (channels in that buffer, interleaved samples).
+    /// Each entry is (channel count, interleaved samples).
     private func makeList(_ buffers: [(channels: Int, samples: [Float])]) -> UnsafeMutableAudioBufferListPointer {
         let list = AudioBufferList.allocate(maximumBuffers: max(buffers.count, 1))
         list.count = buffers.count

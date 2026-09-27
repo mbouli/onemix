@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Control Center-style capsule slider. `value` is 0...1. The hit area is at least 20 pt tall.
+/// Control Center-style capsule slider over 0...1, with a hit area of at least 20 pt.
 struct CapsuleSlider: View {
     @Binding var value: Double
     var height: CGFloat

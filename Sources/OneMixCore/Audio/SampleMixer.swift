@@ -1,7 +1,7 @@
 import CoreAudio
 
-/// Copies tapped audio to the output with gain. Runs on the realtime audio
-/// thread, so it must not allocate, lock, or call into Swift runtime-heavy APIs.
+/// Copies tapped audio to the output with gain. Runs on the realtime thread: no
+/// allocation, locking, or Swift runtime calls.
 public enum SampleMixer {
     @inline(__always)
     static func approach(_ from: Float, _ to: Float, maxDelta: Float) -> Float {
@@ -10,12 +10,10 @@ public enum SampleMixer {
         return from + (delta > 0 ? maxDelta : -maxDelta)
     }
 
-    /// Returns the gain reached at the end of the buffer.
+    /// Returns the gain at the end of the buffer.
     ///
-    /// - Parameter firstInputBuffer: Input buffers at indices below this are ignored
-    ///   entirely — not counted toward the channel count and never used as a source.
-    ///   Used to skip the aggregate's own input streams (e.g. a headset mic) that
-    ///   precede the tap's buffer(s) in the IOProc's input list.
+    /// - Parameter firstInputBuffer: Index of the first tap buffer. Earlier buffers belong
+    ///   to the output device's own inputs and are ignored.
     public static func process(
         input: UnsafeMutableAudioBufferListPointer,
         output: UnsafeMutableAudioBufferListPointer,
@@ -40,7 +38,7 @@ public enum SampleMixer {
             maxOutputFrames = max(maxOutputFrames, outFrames)
 
             for channel in 0..<outChannels {
-                // Locate the source channel (output channel c reads input channel c % inputChannelCount).
+                // Output channel c reads input channel c % inputChannelCount.
                 var source: UnsafeMutablePointer<Float>?
                 var sourceStride = 1
                 var sourceFrames = 0

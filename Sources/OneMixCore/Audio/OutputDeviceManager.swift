@@ -9,8 +9,8 @@ public struct OutputDevice: Identifiable, Equatable, Sendable {
     public let transport: DeviceTransport
 }
 
-/// Output devices, the system default output, and its master volume/mute.
-/// Kept live via Core Audio listeners so keyboard volume keys and Control Center stay in sync.
+/// Output devices and the default output's volume and mute, kept current through Core Audio
+/// listeners so changes from volume keys and Control Center are reflected.
 @MainActor @Observable
 public final class OutputDeviceManager {
     public private(set) var devices: [OutputDevice] = []
@@ -58,7 +58,6 @@ public final class OutputDeviceManager {
         try? CA.set(.system, CA.address(kAudioHardwarePropertyDefaultOutputDevice), device.id)
     }
 
-    /// The output device with this UID, if it is currently present.
     nonisolated static func outputDevice(uid: String) -> OutputDevice? {
         let ids = (try? CA.getObjectIDs(.system, CA.address(kAudioHardwarePropertyDevices))) ?? []
         return ids.lazy.compactMap(makeOutputDevice).first { $0.uid == uid }

@@ -13,7 +13,7 @@ final class MixerViewModel {
     private(set) var permission: AudioCapturePermission.Status
     private(set) var showAllApps: Bool
     private(set) var launchAtLogin: Bool
-    /// Native-volume apps whose last AppleScript command failed (e.g. Automation denied).
+    /// Native-volume apps whose last Apple Event failed, usually because Automation was denied.
     private(set) var nativeFailedBundleIDs: Set<String> = []
 
     private let monitor = AudioProcessMonitor()
@@ -23,10 +23,10 @@ final class MixerViewModel {
     @ObservationIgnored private var graceTask: Task<Void, Never>?
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     @ObservationIgnored private var scriptedVolume: ScriptedVolume!
-    /// Last setting pushed to each running native-volume app; cleared when the app quits
-    /// so a relaunch gets the saved volume again.
+    /// Last setting sent to each running native-volume app. Cleared on quit so a relaunch
+    /// reapplies the saved volume.
     @ObservationIgnored private var pushedNative: [String: AppVolumeSetting] = [:]
-    /// Native apps currently reporting playback via their playerInfo notification.
+    /// Native-volume apps currently playing, according to their playerInfo notifications.
     @ObservationIgnored private var nativePlaying: Set<String> = []
     @ObservationIgnored private let log = Logger(subsystem: "com.onemix.OneMix", category: "app")
 
@@ -85,7 +85,7 @@ final class MixerViewModel {
     func setVolume(_ volume: Float, for bundleID: String) {
         var setting = store.setting(for: bundleID)
         setting.volume = min(max(volume, 0), 1)
-        setting.muted = false  // dragging a slider unmutes, like the native volume
+        setting.muted = false  // Matches system behavior: adjusting volume unmutes.
         update(setting, for: bundleID)
     }
 
@@ -110,11 +110,10 @@ final class MixerViewModel {
         launchAtLogin = SMAppService.mainApp.status == .enabled
     }
 
-    /// Called whenever the panel opens; picks up permission granted in System Settings.
+    /// Called on panel open to pick up permission granted in System Settings.
     func panelDidOpen() {
         let latest = AudioCapturePermission.status()
-        // `.unknown` from the preflight (TCC unavailable) must never downgrade a
-        // current `.granted` or `.denied` that we already resolved elsewhere.
+        // `.unknown` means TCC was unavailable; it must not override a resolved status.
         let previous = permission
         if latest == .granted || latest == .denied {
             permission = latest
@@ -158,7 +157,7 @@ final class MixerViewModel {
         scriptedVolume.set(setting, for: bundleID)
     }
 
-    /// Applies saved volumes to native-volume apps that are running (e.g. just launched).
+    /// Pushes saved volumes to running native-volume apps.
     private func pushNativeVolumes(running apps: [RunningAppInfo]) {
         let running = Set(apps.map(\.bundleID))
         for bundleID in pushedNative.keys where !running.contains(bundleID) {
@@ -169,7 +168,7 @@ final class MixerViewModel {
         }
     }
 
-    /// Picks up volume changes made inside the app itself (e.g. Music's own slider).
+    /// Syncs volume changes made in the app itself, such as Music's own slider.
     private func syncNativeVolumesFromApps() {
         for bundleID in NativeVolumeApps.bundleIDs where pushedNative[bundleID] != nil {
             scriptedVolume.read(bundleID) { [weak self] scriptVolume in
@@ -189,7 +188,7 @@ final class MixerViewModel {
 
     private func refresh() {
         let apps = Self.runningApps()
-        // A quit app can't be playing; its last playerInfo may have said "Playing".
+        // The last playerInfo before quitting may still say "Playing".
         nativePlaying.formIntersection(apps.map(\.bundleID))
         groups = AppListModel.group(processes: monitor.processes, apps: apps, responsiblePID: ResponsiblePID.of)
         if permission == .granted {

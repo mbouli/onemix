@@ -101,8 +101,6 @@ final class AppListModelTests: XCTestCase {
         XCTAssertEqual(model.nextExpiry(now: t0 + 5), t0 + 15)
     }
 
-    // Apps can report playback themselves (Music's playerInfo notification) before Core
-    // Audio lists a process for them; they must show up immediately as playing.
     func testAppReportedPlayingIsListedWithoutAudioProcess() {
         var model = AppListModel()
         let rows = model.rows(apps: apps, groups: [:], showAllApps: false, now: t0, alsoPlaying: ["com.apple.Music"], setting: { _ in .default })

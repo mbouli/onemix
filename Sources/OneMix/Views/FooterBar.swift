@@ -1,8 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Bottom row: a gear menu with settings on the left, an ✕ menu with Quit on the right.
-/// Both open native macOS menus.
+/// Panel footer with the settings and quit menus.
 struct FooterBar: View {
     let model: MixerViewModel
 
@@ -33,8 +32,8 @@ struct FooterBar: View {
         .menuIndicator(.hidden)
         .padding(.horizontal, 2)
         .background {
-            // A closed Menu's item shortcut isn't live (OneMix has no main menu), so keep
-            // ⌘Q working while the panel is open with an invisible button.
+            // Menu item shortcuts only fire while the menu is open, and there is no main
+            // menu, so a hidden button keeps ⌘Q working.
             Button("Quit OneMix") { NSApp.terminate(nil) }
                 .keyboardShortcut("q")
                 .opacity(0)

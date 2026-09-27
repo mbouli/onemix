@@ -13,7 +13,7 @@ public struct RunningAppInfo: Equatable, Sendable {
     }
 }
 
-/// All audio process objects that belong to one app (app + its helpers).
+/// The audio process objects for an app and its helpers.
 public struct AppAudioGroup: Equatable, Sendable {
     public let app: RunningAppInfo
     public var processObjectIDs: [AudioObjectID]
@@ -31,9 +31,8 @@ public struct AppRowData: Identifiable, Equatable, Sendable {
 }
 
 public enum AppAttribution {
-    /// The running app that owns an audio process: by responsible PID first
-    /// (e.g. WebKit GPU process → Safari), then by the longest bundle ID prefix
-    /// (e.g. com.google.Chrome.helper → com.google.Chrome).
+    /// Resolves the app that owns an audio process, by responsible PID first and then by
+    /// longest bundle ID prefix (com.google.Chrome.helper → com.google.Chrome).
     public static func owner(of process: AudioProcess, responsiblePID: pid_t, apps: [RunningAppInfo]) -> RunningAppInfo? {
         if let app = apps.first(where: { $0.pid == responsiblePID }) { return app }
         guard let bundleID = process.bundleID else { return nil }
@@ -46,7 +45,7 @@ public enum AppAttribution {
 public struct AppListModel {
     public static let gracePeriod: TimeInterval = 10
 
-    /// When each app was last seen playing (or stopped playing).
+    /// Time each app was last seen playing or stopped.
     private var lastPlayed: [String: Date] = [:]
     private var playingLastTime: Set<String> = []
 
@@ -76,10 +75,8 @@ public struct AppListModel {
         alsoPlaying: Set<String> = [],
         setting: (String) -> AppVolumeSetting
     ) -> [AppRowData] {
-        // `alsoPlaying`: apps that report playback themselves (e.g. Music's playerInfo
-        // notification), which can come well before Core Audio lists a process for them.
+        // `alsoPlaying` covers apps that report playback before Core Audio lists them.
         let playingNow = Set(groups.values.filter(\.isPlaying).map(\.app.bundleID)).union(alsoPlaying)
-        // Refresh apps that are playing, and stamp apps that just stopped with the stop time.
         for bundleID in playingNow.union(playingLastTime) { lastPlayed[bundleID] = now }
         playingLastTime = playingNow
         lastPlayed = lastPlayed.filter { now.timeIntervalSince($0.value) < Self.gracePeriod }
@@ -102,7 +99,7 @@ public struct AppListModel {
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
-    /// When the next quiet app falls out of the grace period, so the caller can refresh then.
+    /// When the next idle app leaves the grace period, for scheduling a refresh.
     public func nextExpiry(now: Date) -> Date? {
         lastPlayed
             .filter { !playingLastTime.contains($0.key) }

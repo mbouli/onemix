@@ -14,7 +14,6 @@ final class NativeVolumeAppsTests: XCTestCase {
         XCTAssertEqual(NativeVolumeApps.scriptVolume(-1), 0)
     }
 
-    // Music rejects setting its `mute` property (error 9038), so mute is sent as volume 0.
     func testMutedSettingIsSentAsZeroVolume() {
         XCTAssertEqual(NativeVolumeApps.scriptVolume(for: AppVolumeSetting(volume: 0.6, muted: true)), 0)
         XCTAssertEqual(NativeVolumeApps.scriptVolume(for: AppVolumeSetting(volume: 0.6, muted: false)), 60)

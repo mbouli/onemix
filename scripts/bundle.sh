@@ -1,5 +1,5 @@
 #!/bin/bash
-# Builds OneMix in release mode and assembles build/OneMix.app (ad-hoc signed).
+# Release build of build/OneMix.app, ad-hoc signed.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -11,7 +11,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/OneMix "$APP/Contents/MacOS/OneMix"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 
-# App icon: every size macOS asks for, generated from the 1024px master.
+# Generate the iconset from the 1024px master.
 ICON_SRC=Resources/Icon-macOS-Default-1024@1x.png
 ICONSET=build/AppIcon.iconset
 rm -rf "$ICONSET"

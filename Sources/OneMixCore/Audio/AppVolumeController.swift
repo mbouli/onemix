@@ -14,9 +14,9 @@ public struct TapTarget: Equatable, Sendable {
     }
 }
 
-/// Owns one ProcessTap per app that needs one. Apps at 100% and unmuted get no tap,
-/// unless they were already routed this session: returning to 100% keeps the tap at
-/// full gain, since tearing it down (and later rebuilding it) causes an audible gap.
+/// Manages a process tap per app. Unmuted apps at 100% are left untapped, except those
+/// already routed this session: they keep their tap at unity gain, because tearing it down
+/// causes an audible gap.
 @MainActor @Observable
 public final class AppVolumeController {
     public private(set) var failedBundleIDs: Set<String> = []
@@ -24,12 +24,10 @@ public final class AppVolumeController {
     @ObservationIgnored private var taps: [String: any AudioTap] = [:]
     @ObservationIgnored private var targets: [String: TapTarget] = [:]
     @ObservationIgnored private var outputUID: String?
-    /// Apps that have had a tap this session; they keep one even at 100% until they
-    /// leave `sync`'s targets (app quit / no audio processes) or `removeAll`.
+    /// Apps tapped this session. Cleared when an app leaves `sync`'s targets or on `removeAll`.
     @ObservationIgnored private var routed: Set<String> = []
     @ObservationIgnored private let log = Logger(subsystem: "com.onemix.OneMix", category: "taps")
-    /// `startGain` is the gain the new tap ramps from: 1 (native level) for an app's
-    /// first tap, or the target gain when replacing an existing tap.
+    /// `startGain` is 1 for an app's first tap and the target gain for a replacement.
     typealias TapFactory = (_ processObjectIDs: [AudioObjectID], _ outputUID: String, _ gain: Float, _ startGain: Float) throws -> any AudioTap
     @ObservationIgnored private let makeTap: TapFactory
 
@@ -39,24 +37,18 @@ public final class AppVolumeController {
         }
     }
 
-    /// Test seam: lets tests substitute a fake tap instead of a real `ProcessTap`.
     init(makeTap: @escaping TapFactory) {
         self.makeTap = makeTap
     }
 
     public var activeTapCount: Int { taps.count }
 
-    /// Points every tap at the new output device: moved in place for a different device,
-    /// rebuilt for the same UID (it can point at a new, live device after a Bluetooth
-    /// reconnect, while the old aggregate has gone away silently).
+    /// Retargets all taps to `uid`. A different device is swapped in place. The same UID is
+    /// rebuilt, since after a Bluetooth reconnect the old aggregate may be silently dead.
     public func setOutputDevice(uid: String) {
         outputUID = uid
         failedBundleIDs = []
         for target in targets.values {
-            // A different device: move the running tap in place (restarting its IO makes
-            // Bluetooth smart routing hijack the output back to in-ear AirPods). The same
-            // UID (e.g. AirPods reconnecting) still gets a full rebuild, since the old
-            // aggregate may be dead.
             if let tap = taps[target.bundleID], tap.outputUID != uid {
                 do {
                     try tap.retarget(outputUID: uid)
@@ -71,7 +63,7 @@ public final class AppVolumeController {
         }
     }
 
-    /// Makes the set of taps match `newTargets`; apps not listed lose their tap.
+    /// Reconciles taps with `newTargets`, removing taps for apps not listed.
     public func sync(_ newTargets: [TapTarget]) {
         let wanted = Set(newTargets.map(\.bundleID))
         for bundleID in Array(targets.keys) where !wanted.contains(bundleID) {
@@ -89,18 +81,14 @@ public final class AppVolumeController {
         reconcile(target, previous: previous, force: false)
     }
 
-    /// Clears `failedBundleIDs` and re-applies every current target, so a transient
-    /// failure (e.g. before Screen & System Audio Recording permission is granted)
-    /// isn't stuck forever. Callers (e.g. the panel opening, or permission becoming
-    /// granted) decide when this is worth trying again.
+    /// Clears `failedBundleIDs` and re-applies all targets, so failures that happened
+    /// before a permission was granted can recover.
     public func retryFailed() {
         failedBundleIDs = []
         for target in targets.values { apply(target) }
     }
 
-    /// Tears down and rebuilds every tap from the current targets, e.g. once capture
-    /// permission newly becomes granted. Unlike `apply`, this always rebuilds even when
-    /// nothing about the target changed.
+    /// Rebuilds every tap unconditionally, e.g. after capture permission is granted.
     public func rebuildAll() {
         failedBundleIDs = []
         for target in targets.values { reconcile(target, previous: nil, force: true) }
@@ -114,9 +102,7 @@ public final class AppVolumeController {
         failedBundleIDs = []
     }
 
-    /// Decides whether `target`'s tap needs (re)building and, if so, rebuilds it.
-    /// `force` skips the "unchanged" and "already failed" shortcuts, for callers that
-    /// need every tap actually recreated.
+    /// Rebuilds `target`'s tap if it changed. `force` also rebuilds unchanged and failed taps.
     private func reconcile(_ target: TapTarget, previous: TapTarget?, force: Bool) {
         let wantsTap = target.setting.needsTap || routed.contains(target.bundleID)
         guard wantsTap, !target.processObjectIDs.isEmpty, let outputUID else {
@@ -128,17 +114,16 @@ public final class AppVolumeController {
             tap.setGain(target.setting.effectiveGain)
             return
         }
-        // Don't hammer Core Audio retrying a failed tap on every slider tick.
+        // Failed taps wait for `retryFailed` rather than retrying on every update.
         if !force, failedBundleIDs.contains(target.bundleID), previous?.processObjectIDs == target.processObjectIDs {
             return
         }
         rebuildTap(for: target, outputUID: outputUID)
     }
 
-    /// Builds the replacement tap before invalidating the old one, so a muted or
-    /// quieted app never briefly plays at full native volume during a rebuild. If
-    /// construction fails, the old tap is still invalidated so the app isn't left
-    /// stuck muted with nothing replaying its audio.
+    /// Creates the new tap before invalidating the old one, so the app never briefly plays
+    /// at native volume. The old tap is invalidated even on failure, since leaving it would
+    /// keep the app muted with nothing replaying it.
     private func rebuildTap(for target: TapTarget, outputUID: String) {
         let oldTap = taps[target.bundleID]
         log.info("Building tap for \(target.bundleID, privacy: .public) on \(outputUID, privacy: .public)")

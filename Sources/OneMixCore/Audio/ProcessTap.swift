@@ -5,13 +5,12 @@ import Synchronization
 /// Gain shared between the main thread (writer) and the realtime IOProc (reader).
 final class TapGain: @unchecked Sendable {
     private let targetBits: Atomic<UInt32>
-    private var current: Float  // touched only on the audio thread
+    private var current: Float  // audio thread only
 
-    /// ~10 ms full-scale ramp at 48 kHz, which avoids clicks when the slider moves.
+    /// Full-scale ramp of ~10 ms at 48 kHz, to avoid zipper noise.
     private static let maxStepPerFrame: Float = 1.0 / 480
 
-    /// Starts at `startGain` and ramps to `gain`, e.g. from native full volume (1) down
-    /// to the slider's value when an app is first routed.
+    /// Ramps from `startGain` to `gain`, so a newly routed app fades from its native level.
     init(_ gain: Float, startGain: Float) {
         targetBits = Atomic(gain.bitPattern)
         current = startGain
@@ -21,12 +20,9 @@ final class TapGain: @unchecked Sendable {
         targetBits.store(gain.bitPattern, ordering: .relaxed)
     }
 
-    /// - Parameter tapChannelCount: The tap's channel count, used to find where the
-    ///   tap's own buffer(s) start in `input`. The aggregate's sub-device (the real
-    ///   output device) may itself have input streams — e.g. a USB headset or a
-    ///   display's built-in mic — which precede the tap's stream(s) in the IOProc's
-    ///   input buffer list. Mixing those in would replay the microphone instead of
-    ///   (or in addition to) the tapped app.
+    /// - Parameter tapChannelCount: Used to locate the tap's buffers in `input`. The output
+    ///   device may have its own input streams (a headset mic, for example), and these come
+    ///   before the tap's streams in the aggregate's buffer list.
     func render(input: UnsafePointer<AudioBufferList>, output: UnsafeMutablePointer<AudioBufferList>, tapChannelCount: Int) {
         let target = Float(bitPattern: targetBits.load(ordering: .relaxed))
         let inputList = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input))
@@ -40,10 +36,8 @@ final class TapGain: @unchecked Sendable {
         )
     }
 
-    /// Walks backward from the last input buffer, summing channels, until the tap's
-    /// channel count is reached — that index is where the tap's own buffer(s) begin.
-    /// Falls back to 0 (use everything) if the buffers never add up to that count.
-    /// Allocation-free: a fixed-size loop over the buffer list.
+    /// Index of the first tap buffer, found by summing channels backward from the last
+    /// buffer. Returns 0 if the counts don't line up. Allocation-free.
     private static func firstTapBuffer(in input: UnsafeMutableAudioBufferListPointer, tapChannelCount: Int) -> Int {
         guard tapChannelCount > 0 else { return 0 }
         var channelsSeen = 0
@@ -57,19 +51,18 @@ final class TapGain: @unchecked Sendable {
     }
 }
 
-/// A process tap, abstracted so `AppVolumeController` can be tested with a fake.
-/// `ProcessTap` is the only production conformance.
+/// Abstraction over `ProcessTap` so `AppVolumeController` can be tested.
 protocol AudioTap: AnyObject {
     var processObjectIDs: [AudioObjectID] { get }
     var outputUID: String { get }
-    /// Moves the running tap to another output device without stopping its IO.
+    /// Retargets the running tap to another output device without stopping IO.
     func retarget(outputUID: String) throws
     func setGain(_ value: Float)
     func invalidate()
 }
 
-/// One process tap (muted only while OneMix is reading it), a private aggregate device (output device + tap), and an
-/// IOProc that replays the tapped audio with gain. Destroying it restores native audio.
+/// A process tap, a private aggregate device combining it with the output, and an IOProc
+/// that replays the tapped audio with gain. Invalidating it restores native playback.
 final class ProcessTap: AudioTap {
     let processObjectIDs: [AudioObjectID]
     private(set) var outputUID: String
@@ -103,8 +96,7 @@ final class ProcessTap: AudioTap {
         description.uuid = UUID()
         description.name = "OneMix"
         description.isPrivate = true
-        // Mute the app's own output only while our IOProc is reading the tap, so there is
-        // no silent gap between creating the tap and the aggregate device starting.
+        // Mute only while the IOProc is reading, so there is no gap before the aggregate starts.
         description.muteBehavior = .mutedWhenTapped
         try check(AudioHardwareCreateProcessTap(description, &tapID), "create process tap")
 
@@ -143,9 +135,8 @@ final class ProcessTap: AudioTap {
         try check(AudioDeviceStart(aggregateID, ioProcID), "start aggregate device")
     }
 
-    /// Swaps the aggregate's output sub-device in place. Stopping and restarting a tap's IO
-    /// on an output change makes macOS Bluetooth smart routing "hijack" the output back to
-    /// in-ear AirPods on OneMix's behalf; keeping the same running aggregate avoids that.
+    /// Swaps the aggregate's output sub-device in place. Restarting IO instead triggers
+    /// Bluetooth automatic switching, which routes output back to AirPods that are in-ear.
     func retarget(outputUID newUID: String) throws {
         let subDevices = [newUID] as CFArray
         var address = CA.address(kAudioAggregateDevicePropertyFullSubDeviceList)
@@ -166,7 +157,7 @@ final class ProcessTap: AudioTap {
         outputUID = newUID
     }
 
-    /// Idempotent teardown. Once the tap is destroyed, the app plays natively again.
+    /// Tears down the tap and restores native playback. Safe to call more than once.
     func invalidate() {
         if aggregateID != .unknown {
             if let ioProcID {
